@@ -1,0 +1,54 @@
+<?php
+/*
+Plugin Name: Simple Tag Replacement via AJAX
+Description: Replaces a tag ID with another in all posts of a certain post type. Usage: admin-ajax.php?action=wp_ajax_replace_tag&find={BAD_TAG_ID}&replace={GOOD_TAG_ID}&post_type={POST_TYPE}
+Version: 0.1
+Author: Estevao Neto
+*/
+
+add_action('wp_ajax_replace_tag', 'replace_tag_callback');
+
+function replace_tag_callback() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'No can do, sorry.'], 403);
+        return;
+    }
+    $post_type = sanitize_title($_POST['post_type']);
+
+    $find_tag_id = isset($_POST['find']) ? intval($_POST['find']) : false;
+    $replace_tag_id = isset($_POST['replace']) ? intval($_POST['replace']) : false;
+    // only apply change if we are specifying a public, visible CPT
+    // (avoids potential issues with non-public post types e.g nav menu, ACF field etc)
+    $post_type_ok = post_type_exists($post_type) && is_post_type_viewable($post_type);
+    if (!$post_type_ok || !$find_tag_id || !$replace_tag_id) {
+        wp_send_json_error(['message' => 'Invalid tag IDs provided'], 400);
+        return;
+    }
+
+    $args = [
+        'posts_per_page' => -1,
+        'post_type' => $post_type,
+        'fields' => 'ids',
+        'tax_query' => [
+            [
+                'taxonomy' => 'post_tag',
+                'field' => 'term_id',
+                'terms' => $find_tag_id,
+            ],
+        ],
+    ];
+
+    $posts = get_posts($args);
+
+    if (empty($posts)) {
+        wp_send_json_error(['message' => 'No posts found with the specified tag ID (FIND parameter)', 404]);
+        return;
+    }
+
+    foreach ($posts as $post_id) {
+        wp_remove_object_terms($post_id, $find_tag_id, 'post_tag');
+        wp_set_post_tags($post_id, [$replace_tag_id], true);
+    }
+
+    wp_send_json_success(['message' => 'Tags replaced successfully', 'affected_posts' => count($posts), 200]);
+}
